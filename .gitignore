@@ -1,0 +1,15 @@
+node_modules/
+client/node_modules/
+
+# React build output
+client/dist/
+
+# Environment secrets
+.env
+
+# Locally uploaded images (kept out of git, folder structure preserved)
+uploads/*
+!uploads/.gitkeep
+
+.DS_Store
+npm-debug.log*
