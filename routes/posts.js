@@ -9,24 +9,37 @@ const router = express.Router();
 /**
  * Converts a post document into the shape the frontend expects,
  * including whether the current user has liked it.
+ *
+ * `post.author` can be null when the author's account no longer exists —
+ * populate() has nothing to fill in. Callers should drop those posts with
+ * hasAuthor() first, but every property access here is still guarded so a
+ * single orphaned row can never take down a whole feed.
  */
-const shapePost = (post, currentUser, followingIds = null) => ({
-  _id: post._id,
-  content: post.content,
-  image: post.image,
-  author: post.author,
-  likesCount: post.likes.length,
-  commentCount: post.commentCount,
-  isLiked: currentUser
-    ? post.likes.some((id) => id.toString() === currentUser._id.toString())
-    : false,
-  isOwner: currentUser ? post.author._id.toString() === currentUser._id.toString() : false,
-  // Used by Explore so each post can carry its own Follow button
-  isFollowingAuthor: followingIds
-    ? followingIds.includes(post.author._id.toString())
-    : undefined,
-  createdAt: post.createdAt,
-});
+const shapePost = (post, currentUser, followingIds = null) => {
+  const authorId = post.author?._id ? post.author._id.toString() : null;
+
+  return {
+    _id: post._id,
+    content: post.content,
+    image: post.image,
+    author: post.author,
+    likesCount: post.likes.length,
+    commentCount: post.commentCount,
+    isLiked: currentUser
+      ? post.likes.some((id) => id.toString() === currentUser._id.toString())
+      : false,
+    isOwner: Boolean(currentUser && authorId && authorId === currentUser._id.toString()),
+    // Used by Explore so each post can carry its own Follow button
+    isFollowingAuthor: followingIds && authorId ? followingIds.includes(authorId) : undefined,
+    createdAt: post.createdAt,
+  };
+};
+
+/**
+ * Posts whose author has been deleted are skipped rather than rendered
+ * as a blank card.
+ */
+const hasAuthor = (post) => Boolean(post.author && post.author._id);
 
 /**
  * @route   GET /api/posts/feed
@@ -46,7 +59,7 @@ router.get('/feed', protect, async (req, res) => {
       .limit(limit)
       .populate('author', 'username fullName avatar');
 
-    res.json({ posts: posts.map((p) => shapePost(p, req.user)), page });
+    res.json({ posts: posts.filter(hasAuthor).map((p) => shapePost(p, req.user)), page });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error while loading feed' });
@@ -77,7 +90,7 @@ router.get('/explore', optionalAuth, async (req, res) => {
       .populate('author', 'username fullName avatar');
 
     // Everyone here is unfollowed by definition, so the flag is always false
-    res.json({ posts: posts.map((p) => shapePost(p, req.user, [])), page });
+    res.json({ posts: posts.filter(hasAuthor).map((p) => shapePost(p, req.user, [])), page });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error while loading posts' });
@@ -150,11 +163,12 @@ router.get('/:id/comments', optionalAuth, async (req, res) => {
       .populate('author', 'username fullName avatar');
 
     res.json({
-      comments: comments.map((c) => ({
+      // Same guard as posts: a comment whose author was deleted is skipped
+      comments: comments.filter((c) => c.author && c.author._id).map((c) => ({
         _id: c._id,
         text: c.text,
         author: c.author,
-        isOwner: req.user ? c.author._id.toString() === req.user._id.toString() : false,
+        isOwner: Boolean(req.user && c.author._id.toString() === req.user._id.toString()),
         createdAt: c.createdAt,
       })),
     });
